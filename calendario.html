@@ -419,6 +419,53 @@
             100% { box-shadow: 0 0 0 0 rgba(0, 200, 255, 0); }
         }
 
+        /* Estilos para notificaciones */
+        .notification {
+            position: fixed;
+            bottom: 1rem;
+            right: 1rem;
+            background-color: var(--bg-light);
+            border-left: 4px solid var(--primary);
+            padding: 1rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+            z-index: 1000;
+            animation: slideIn 0.5s ease-out;
+            max-width: 300px;
+            display: none;
+        }
+
+        .notification.active {
+            display: block;
+        }
+
+        .notification-title {
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+            color: var(--primary);
+        }
+
+        .notification-content {
+            margin-bottom: 0.5rem;
+        }
+
+        .notification-close {
+            background: none;
+            border: none;
+            color: var(--text-light);
+            float: right;
+            cursor: pointer;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        .audio-player {
+            display: none;
+        }
+
         @media (max-width: 768px) {
             .notes-form {
                 grid-template-columns: 1fr;
@@ -502,6 +549,23 @@
                     </select>
                 </div>
                 
+                
+<div class="form-group">
+    <label for="note-alarm-time">Hora de alarma</label>
+    <input type="time" id="note-alarm-time">
+</div>
+                
+                <div class="form-group">
+                    <label for="note-alarm-sound">Tono de alarma</label>
+                    <select id="note-alarm-sound">
+                        <option value="default">Predeterminado</option>
+                        <option value="soft">Suave</option>
+                        <option value="urgent">Urgente</option>
+                        <option value="chime">Campana</option>
+                        <option value="beep">Pitido</option>
+                    </select>
+                </div>
+                
                 <div class="form-group full-width">
                     <label for="note-content">Contenido</label>
                     <textarea id="note-content" required></textarea>
@@ -521,9 +585,18 @@
                 <div class="note-details-date" id="view-note-date">Fecha</div>
                 <div class="note-priority" id="view-note-priority">Prioridad</div>
                 <div class="note-details-content" id="view-note-content">Contenido de la nota...</div>
+                <div id="view-note-alarm" style="margin-top: 0.5rem; font-size: 0.9rem; color: var(--text-light);"></div>
             </div>
             <button class="btn" id="edit-note" style="margin-top: 1.5rem;">Editar Nota</button>
         </div>
+    </div>
+
+    <!-- Notificación de alarma -->
+    <div class="notification" id="notification">
+        <button class="notification-close" id="close-notification">&times;</button>
+        <div class="notification-title" id="notification-title"></div>
+        <div class="notification-content" id="notification-content"></div>
+        <audio id="alarm-sound"></audio>
     </div>
 
     <script>
@@ -532,7 +605,17 @@
         let notes = JSON.parse(localStorage.getItem('notes')) || [];
         let selectedDate = null;
         let selectedNote = null;
-
+        let alarmTimeout = null;
+    
+        // Sonidos de alarma
+        const alarmSounds = {
+            default: 'https://assets.mixkit.co/sfx/preview/mixkit-alarm-digital-clock-beep-989.mp3',
+            soft: 'https://assets.mixkit.co/sfx/preview/mixkit-software-interface-start-2574.mp3',
+            urgent: 'https://assets.mixkit.co/sfx/preview/mixkit-sci-fi-alarm-905.mp3',
+            chime: 'https://assets.mixkit.co/sfx/preview/mixkit-magic-marimba-283.mp3',
+            beep: 'https://assets.mixkit.co/sfx/preview/mixkit-retro-game-notification-212.mp3'
+        };
+    
         // Elementos del DOM
         const calendarGrid = document.getElementById('calendar-grid');
         const currentMonthElement = document.getElementById('current-month');
@@ -549,6 +632,8 @@
         const noteDateInput = document.getElementById('note-date-input');
         const notePriority = document.getElementById('note-priority');
         const noteContent = document.getElementById('note-content');
+        const noteAlarmTime = document.getElementById('note-alarm-time');
+        const noteAlarmSound = document.getElementById('note-alarm-sound');
         const saveNoteBtn = document.getElementById('save-note');
         const deleteNoteBtn = document.getElementById('delete-note');
         const viewNoteModal = document.getElementById('view-note-modal');
@@ -557,17 +642,31 @@
         const viewNoteDate = document.getElementById('view-note-date');
         const viewNotePriority = document.getElementById('view-note-priority');
         const viewNoteContent = document.getElementById('view-note-content');
+        const viewNoteAlarm = document.getElementById('view-note-alarm');
         const editNoteBtn = document.getElementById('edit-note');
-
+        const notification = document.getElementById('notification');
+        const notificationTitle = document.getElementById('notification-title');
+        const notificationContent = document.getElementById('notification-content');
+        const closeNotificationBtn = document.getElementById('close-notification');
+        const alarmSound = document.getElementById('alarm-sound');
+    
         // Inicializar calendario
         function initCalendar() {
             renderCalendar();
             updateSelectedDate(new Date());
-            
-            // Cargar notas del localStorage
             loadNotes();
+            
+            // Solicitar permiso para notificaciones
+            if ('Notification' in window) {
+                Notification.requestPermission().then(permission => {
+                    console.log('Permiso para notificaciones:', permission);
+                });
+            }
+            
+            // Verificar alarmas al iniciar
+            checkAlarms();
         }
-
+    
         // Renderizar calendario
         function renderCalendar() {
             calendarGrid.innerHTML = '';
@@ -613,7 +712,7 @@
                 }
             }
         }
-
+    
         // Añadir día al calendario
         function addDayToCalendar(date, isOtherMonth) {
             const dayElement = document.createElement('div');
@@ -645,6 +744,7 @@
                 noteElement.innerHTML = `
                     <div class="note-title">${note.title}</div>
                     <div class="note-priority priority-${note.priority}">${getPriorityText(note.priority)}</div>
+                    ${note.alarm ? `<div style="font-size: 0.8rem; color: var(--primary); margin-top: 0.3rem;">⏰ ${formatTime(note.alarm)}</div>` : ''}
                 `;
                 
                 noteElement.addEventListener('click', () => viewNote(note.id));
@@ -661,7 +761,7 @@
             
             calendarGrid.appendChild(dayElement);
         }
-
+    
         // Actualizar fecha seleccionada
         function updateSelectedDate(date) {
             selectedDate = date;
@@ -682,7 +782,7 @@
                 }
             });
         }
-
+    
         // Renderizar lista de notas
         function renderNotesList(notes) {
             notesList.innerHTML = '';
@@ -704,13 +804,14 @@
                     <div class="note-title">${note.title}</div>
                     <div class="note-priority priority-${note.priority}">${getPriorityText(note.priority)}</div>
                     <div class="note-content">${note.content.substring(0, 50)}${note.content.length > 50 ? '...' : ''}</div>
+                    ${note.alarm ? `<div style="font-size: 0.8rem; color: var(--primary); margin-top: 0.3rem;">⏰ ${formatTime(note.alarm)}</div>` : ''}
                 `;
                 
                 noteElement.addEventListener('click', () => viewNote(note.id));
                 notesList.appendChild(noteElement);
             });
         }
-
+    
         // Cargar notas
         function loadNotes() {
             const savedNotes = localStorage.getItem('notes');
@@ -718,7 +819,7 @@
                 notes = JSON.parse(savedNotes);
             }
         }
-
+    
         // Guardar notas
         function saveNotes() {
             localStorage.setItem('notes', JSON.stringify(notes));
@@ -726,8 +827,9 @@
             if (selectedDate) {
                 updateSelectedDate(selectedDate);
             }
+            checkAlarms();
         }
-
+    
         // Ver nota
         function viewNote(noteId) {
             selectedNote = notes.find(note => note.id === noteId);
@@ -739,9 +841,16 @@
             viewNotePriority.className = `note-priority priority-${selectedNote.priority}`;
             viewNoteContent.textContent = selectedNote.content;
             
+            if (selectedNote.alarm) {
+                viewNoteAlarm.textContent = `⏰ Alarma: ${formatTime(selectedNote.alarm)} (${selectedNote.alarmSound || 'default'})`;
+                viewNoteAlarm.style.display = 'block';
+            } else {
+                viewNoteAlarm.style.display = 'none';
+            }
+            
             viewNoteModal.classList.add('active');
         }
-
+    
         // Abrir modal para añadir/editar nota
         function openNoteModal(date = null, note = null) {
             if (note) {
@@ -752,6 +861,18 @@
                 document.getElementById('note-date-input').value = note.date;
                 document.getElementById('note-priority').value = note.priority;
                 document.getElementById('note-content').value = note.content;
+                
+                // Extraer solo la hora si hay alarma
+                if (note.alarm) {
+                    const alarmDate = new Date(note.alarm);
+                    const hours = String(alarmDate.getHours()).padStart(2, '0');
+                    const minutes = String(alarmDate.getMinutes()).padStart(2, '0');
+                    document.getElementById('note-alarm-time').value = `${hours}:${minutes}`;
+                } else {
+                    document.getElementById('note-alarm-time').value = '';
+                }
+                
+                document.getElementById('note-alarm-sound').value = note.alarmSound || 'default';
                 deleteNoteBtn.style.display = 'block';
             } else {
                 // Modo añadir
@@ -761,12 +882,63 @@
                 document.getElementById('note-date-input').value = date || formatDate(selectedDate);
                 document.getElementById('note-priority').value = 'medium';
                 document.getElementById('note-content').value = '';
+                document.getElementById('note-alarm-time').value = '';
+                document.getElementById('note-alarm-sound').value = 'default';
                 deleteNoteBtn.style.display = 'none';
             }
             
             noteModal.classList.add('active');
         }
-
+    
+        // Verificar alarmas
+        function checkAlarms() {
+            // Limpiar timeout anterior si existe
+            if (alarmTimeout) {
+                clearTimeout(alarmTimeout);
+            }
+            
+            // Filtrar notas con alarmas válidas
+            const notesWithAlarms = notes.filter(note => note.alarm && new Date(note.alarm) > new Date());
+            
+            if (notesWithAlarms.length === 0) return;
+            
+            // Ordenar por fecha de alarma más próxima
+            notesWithAlarms.sort((a, b) => new Date(a.alarm) - new Date(b.alarm));
+            
+            const nextAlarm = notesWithAlarms[0];
+            const alarmTime = new Date(nextAlarm.alarm).getTime();
+            const now = new Date().getTime();
+            const timeUntilAlarm = alarmTime - now;
+            
+            // Programar la siguiente alarma
+            alarmTimeout = setTimeout(() => {
+                triggerAlarm(nextAlarm);
+                checkAlarms(); // Verificar si hay más alarmas
+            }, timeUntilAlarm);
+        }
+    
+        // Activar alarma
+        function triggerAlarm(note) {
+            // Mostrar notificación
+            notificationTitle.textContent = note.title;
+            notificationContent.textContent = note.content;
+            notification.classList.add('active');
+            
+            // Reproducir sonido de alarma
+            const soundSrc = alarmSounds[note.alarmSound || 'default'];
+            alarmSound.src = soundSrc;
+            alarmSound.loop = true;
+            alarmSound.play();
+            
+            // También mostrar notificación del sistema si está disponible
+            if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification(note.title, {
+                    body: note.content,
+                    icon: 'https://cdn-icons-png.flaticon.com/512/3652/3652191.png'
+                });
+            }
+        }
+    
         // Formatear fecha
         function formatDate(date) {
             if (!date) return '';
@@ -776,7 +948,17 @@
             const day = String(d.getDate()).padStart(2, '0');
             return `${year}-${month}-${day}`;
         }
-
+    
+        // Formatear solo hora
+        function formatTime(datetime) {
+            if (!datetime) return '';
+            const d = new Date(datetime);
+            return d.toLocaleTimeString('es-ES', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+    
         // Obtener nombre del mes
         function getMonthName(monthIndex) {
             const months = [
@@ -785,7 +967,7 @@
             ];
             return months[monthIndex];
         }
-
+    
         // Obtener texto de prioridad
         function getPriorityText(priority) {
             const priorities = {
@@ -796,46 +978,46 @@
             };
             return priorities[priority] || priority;
         }
-
+    
         // Generar ID único
         function generateId() {
             return Date.now().toString(36) + Math.random().toString(36).substr(2);
         }
-
+    
         // Event Listeners
         prevMonthBtn.addEventListener('click', () => {
             currentDate.setMonth(currentDate.getMonth() - 1);
             renderCalendar();
         });
-
+    
         nextMonthBtn.addEventListener('click', () => {
             currentDate.setMonth(currentDate.getMonth() + 1);
             renderCalendar();
         });
-
+    
         todayBtn.addEventListener('click', () => {
             currentDate = new Date();
             renderCalendar();
             updateSelectedDate(currentDate);
         });
-
+    
         addNoteBtn.addEventListener('click', () => {
             openNoteModal();
         });
-
+    
         closeModalBtn.addEventListener('click', () => {
             noteModal.classList.remove('active');
         });
-
+    
         closeViewModalBtn.addEventListener('click', () => {
             viewNoteModal.classList.remove('active');
         });
-
+    
         editNoteBtn.addEventListener('click', () => {
             viewNoteModal.classList.remove('active');
             openNoteModal(null, selectedNote);
         });
-
+    
         noteForm.addEventListener('submit', (e) => {
             e.preventDefault();
             
@@ -844,24 +1026,48 @@
             const date = noteDateInput.value;
             const priority = notePriority.value;
             const content = noteContent.value;
+            const alarmTime = document.getElementById('note-alarm-time').value;
+            const alarmSoundValue = noteAlarmSound.value;
             
             if (!title || !date || !content) return;
+            
+            // Combinar fecha de la nota con hora de la alarma si existe
+            let alarmDateTime = '';
+            if (alarmTime) {
+                alarmDateTime = `${date}T${alarmTime}`;
+            }
             
             // Buscar si ya existe una nota con este ID
             const existingNoteIndex = notes.findIndex(note => note.id === noteId);
             
             if (existingNoteIndex !== -1) {
                 // Actualizar nota existente
-                notes[existingNoteIndex] = { id: noteId, title, date, priority, content };
+                notes[existingNoteIndex] = { 
+                    id: noteId, 
+                    title, 
+                    date, 
+                    priority, 
+                    content, 
+                    alarm: alarmDateTime, 
+                    alarmSound: alarmSoundValue 
+                };
             } else {
                 // Añadir nueva nota
-                notes.push({ id: noteId, title, date, priority, content });
+                notes.push({ 
+                    id: noteId, 
+                    title, 
+                    date, 
+                    priority, 
+                    content, 
+                    alarm: alarmDateTime, 
+                    alarmSound: alarmSoundValue 
+                });
             }
             
             saveNotes();
             noteModal.classList.remove('active');
         });
-
+    
         deleteNoteBtn.addEventListener('click', () => {
             if (!selectedNote) return;
             
@@ -871,35 +1077,29 @@
                 noteModal.classList.remove('active');
             }
         });
-
+    
+        closeNotificationBtn.addEventListener('click', () => {
+            notification.classList.remove('active');
+            alarmSound.pause();
+            alarmSound.currentTime = 0;
+        });
+    
         // Inicializar
         document.addEventListener('DOMContentLoaded', initCalendar);
     </script>
-
-<script>
-    // Verificar autenticación en cada página
-    document.addEventListener('DOMContentLoaded', function() {
-        const userData = JSON.parse(localStorage.getItem('userData'));
-        
-        if (!userData || !userData.isLoggedIn) {
-            window.location.href = 'registro.html';
-        }
-    });
-</script>
-
-<script>
-    // Verificar autenticación en cada página
-    document.addEventListener('DOMContentLoaded', function() {
-        const userData = JSON.parse(localStorage.getItem('userData'));
-        
-        if (!userData || !userData.isLoggedIn) {
-            // Limpiar datos residuales al redirigir
-            localStorage.removeItem('userData');
-            localStorage.removeItem('profileImage');
-            window.location.href = 'registro.html';
-        }
-    });
-</script>
-
+    
+    <script>
+        // Verificar autenticación en cada página
+        document.addEventListener('DOMContentLoaded', function() {
+            const userData = JSON.parse(localStorage.getItem('userData'));
+            
+            if (!userData || !userData.isLoggedIn) {
+                // Limpiar datos residuales al redirigir
+                localStorage.removeItem('userData');
+                localStorage.removeItem('profileImage');
+                window.location.href = 'registro.html';
+            }
+        });
+    </script>
 </body>
 </html>
