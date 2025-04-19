@@ -829,7 +829,21 @@
             }
             checkAlarms();
         }
+
+function saveNotes() {
+    localStorage.setItem('notes', JSON.stringify(notes));
     
+    // Si estás en Android WebView, enviar las notas a la app nativa
+    if (window.AndroidInterface) {
+        window.AndroidInterface.updateWidgetNotes(JSON.stringify(notes));
+    }
+    
+    renderCalendar();
+    if (selectedDate) {
+        updateSelectedDate(selectedDate);
+    }
+    checkAlarms();
+}
         // Ver nota
         function viewNote(noteId) {
             selectedNote = notes.find(note => note.id === noteId);
